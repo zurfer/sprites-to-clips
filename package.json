@@ -1,0 +1,16 @@
+{
+  "name": "com.cayaware.sprites-to-clips",
+  "version": "1.0.0",
+  "displayName": "Sprite Sequences to Clips",
+  "description": "Batch create animation clips from selection or all sprite sequences in a folder.",
+  "unity": "2020.3",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zurfer/sprites-to-clips.git"
+  },
+  "author": {
+    "name": "Cayaware Games",
+    "email": "cayaware@gmail.com",
+    "url": "https://github.com/zurfer"
+  }
+}
