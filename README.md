@@ -2,13 +2,13 @@
 
 This is a Unity editor tool that helps with batch creation of animation clips from sprite sequences.
 
-Select a folder containing your sprites,
+Select a folder containing your sprites:
 
-![from a folder](./images/from_selection.png)
+![from a folder](./images/from_folder.png)
 
- or manually select the sprites,
+ or manually select the sprites:
 
- ![from selection](./images/from_selection.png)
+![from selection](./images/from_selection.png)
 
 when set the output folder and click 'Create'. The rest of the fields are self-expanatory.
 
