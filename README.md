@@ -8,7 +8,7 @@ Select a folder containing your sprites,
 
  or manually select the sprites,
 
- [from selection](./images/from_selection.png)
+ ![from selection](./images/from_selection.png)
 
 when set the output folder and click 'Create'. The rest of the fields are self-expanatory.
 
