@@ -1,6 +1,6 @@
 {
   "name": "com.cayaware.sprites-to-clips",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "displayName": "Sprite Sequences to Clips",
   "description": "Batch create animation clips from selection or all sprite sequences in a folder.",
   "unity": "2020.3",
