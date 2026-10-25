@@ -5,6 +5,7 @@ using UnityEngine;
 using UnityEditor;
 using System.Linq;
 using System.Text;
+using System.Text.RegularExpressions;
 using Object = UnityEngine.Object;
 
 namespace Cayaware.EditorTools
@@ -72,6 +73,14 @@ namespace Cayaware.EditorTools
             }
         }
         
+
+        public enum ExistingClipBehaviour
+        {
+            Skip,
+            Update,
+            Override,
+        }
+
         private class UserPrefs
         {
             public string InpFolder = Path.Combine("Assets","Textures");
@@ -80,10 +89,11 @@ namespace Cayaware.EditorTools
             public int OutFrameRate = 12;
             public OutputFormat OutFormat = OutputFormat.Clip;
             public OutputNaming OutNaming = OutputNaming.KeepOriginal;
+            public ExistingClipBehaviour OnClipExist = ExistingClipBehaviour.Skip;
             public override string ToString()
             {
                 return $"Input folder: {InpFolder}, Output folder: {OutFolder}, Input frame separator: {InpFramePrefix}, " +
-                       $"Output frame rate: {OutFrameRate}, Output format: {OutFormat}, Output naming: {OutNaming}";
+                       $"Output frame rate: {OutFrameRate}, Output format: {OutFormat}, Output naming: {OutNaming}, OnClipExist: {OnClipExist}";
             }
         }
 
@@ -131,6 +141,7 @@ namespace Cayaware.EditorTools
         private const string EditorPrefsKey = "Cayaware.SpritesToClips";
         private const int FileDialogButtonWidth = 40;
         private const int VertPaddingDivisor = 4;
+        private static readonly Regex FpsRegex = new(@"(\d+)\s*fps", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
         private readonly UserPrefs m_userPrefs = new ();
 
@@ -242,6 +253,7 @@ namespace Cayaware.EditorTools
                 m_userPrefs.OutFormat = (OutputFormat)EditorGUILayout.EnumPopup("Format", m_userPrefs.OutFormat);
                 m_userPrefs.OutNaming = (OutputNaming)EditorGUILayout.EnumPopup("Naming", m_userPrefs.OutNaming);
                 m_userPrefs.OutFrameRate = EditorGUILayout.IntField("Frame Rate", m_userPrefs.OutFrameRate);
+                m_userPrefs.OnClipExist = (ExistingClipBehaviour)EditorGUILayout.EnumPopup("If Clip Exists", m_userPrefs.OnClipExist);
                 if (EditorGUI.EndChangeCheck()) hasChanged = true;
             }
             EditorGUILayout.EndVertical();
@@ -280,7 +292,7 @@ namespace Cayaware.EditorTools
             int numProcessed = 1, totalCount = m_hashmap.Count;
 
             foreach (var item in m_hashmap) {
-                CreateAnimationClip(item.Value, m_userPrefs.OutFolder);
+                ProcessAnimationClip(item.Value, m_userPrefs.OutFolder);
                 EditorUtility.DisplayProgressBar("Progress", $"Exporting {numProcessed} out of {totalCount}...", (float)numProcessed / totalCount);
                 numProcessed++;
             }
@@ -471,43 +483,107 @@ namespace Cayaware.EditorTools
             return false;
         }
 
-        private void CreateAnimationClip(IReadOnlyList<SourceSprite> spr, string animationPath)
+        private static bool IsExistingClip(string clipPath)
         {
-            var sprites = spr.ToList();
-            sprites.Sort((a, b) => a.Frame < b.Frame ? -1 : 1);
-            
-            var animationClipName = MakeClipName(sprites[0]);
+            return AssetDatabase.LoadAssetAtPath<AnimationClip>(clipPath) != null;
+        }
 
-            var clip = new AnimationClip
-            {
-                frameRate = m_userPrefs.OutFrameRate,
-                wrapMode = WrapMode.Loop,
-            };
-            
+        private static EditorCurveBinding SpriteCurveBinding => new()
+        {
+            path = string.Empty,
+            propertyName = "m_Sprite",
+            type = typeof(SpriteRenderer)
+        };
 
-            // Create binding curve
-            var curveBinding = new EditorCurveBinding
-            {
-                path = string.Empty,
-                propertyName = "m_Sprite",
-                type = typeof(SpriteRenderer)
-            };
-
-            // Create keyframes
+        private static ObjectReferenceKeyframe[] MakeSpriteKeyframes(IReadOnlyList<SourceSprite> sprites, int fps)
+        {
             var spriteKeyFrames = new ObjectReferenceKeyframe[sprites.Count];
-            for (var i = 0; i <= sprites.Count; i++) {
-                var index = Mathf.Clamp(i, 0, sprites.Count - 1);
-
-                spriteKeyFrames[index] = new ObjectReferenceKeyframe
+            for (var i = 0; i < sprites.Count; i++) {
+                spriteKeyFrames[i] = new ObjectReferenceKeyframe
                 {
-                    value = sprites[index].Sprite,
-                    time = ((float)index)/m_userPrefs.OutFrameRate,
+                    value = sprites[i].Sprite,
+                    time = i / (float)fps,
                 };
             }
 
-            AnimationUtility.SetObjectReferenceCurve(clip, curveBinding, spriteKeyFrames);
-            AssetDatabase.CreateAsset(clip, Path.Combine(animationPath, animationClipName + ".anim"));
+            return spriteKeyFrames;
+        }
+
+        private static void CreateNewClip(IReadOnlyList<SourceSprite> sprites, int fps, string assetPath)
+        {
+            if (IsExistingClip(assetPath)) AssetDatabase.DeleteAsset(assetPath);
+
+            var clip = new AnimationClip
+            {
+                frameRate = fps,
+                wrapMode = WrapMode.Loop,
+            };
+
+            AnimationUtility.SetObjectReferenceCurve(clip, SpriteCurveBinding, MakeSpriteKeyframes(sprites, fps));
+            AssetDatabase.CreateAsset(clip, assetPath);
             AssetDatabase.SaveAssets();
+        }
+
+        private static void UpdateClip(IReadOnlyList<SourceSprite> sprites, int fps, string assetPath)
+        {
+            var clip = AssetDatabase.LoadAssetAtPath<AnimationClip>(assetPath);
+            if (!clip) return;
+
+            // Keep the existing settings (loop time, events, etc.), only refresh the sprite curve and the frame rate
+            AnimationUtility.SetObjectReferenceCurve(clip, SpriteCurveBinding, MakeSpriteKeyframes(sprites, fps));
+            clip.frameRate = fps;
+
+            EditorUtility.SetDirty(clip);
+            AssetDatabase.SaveAssets();
+        }
+
+        /// <summary>
+        ///     Extracts the frame rate from a clip name, e.g. "run_8fps" or "Run8Fps" -> 8.
+        ///     The last occurrence wins when the name contains more than one FPS marker.
+        /// </summary>
+        private static bool TryParseFps(string animClipName, out int fps)
+        {
+            fps = default;
+            if (string.IsNullOrEmpty(animClipName)) return false;
+
+            var matches = FpsRegex.Matches(animClipName);
+            if (matches.Count == 0) return false;
+
+            var lastMatch = matches[matches.Count - 1];
+            if (!int.TryParse(lastMatch.Groups[1].Value, out var parsedFps) || parsedFps <= 0) return false;
+
+            fps = parsedFps;
+            return true;
+        }
+
+        private void ProcessAnimationClip(IReadOnlyList<SourceSprite> spr, string animationPath)
+        {
+            var sprites = spr.ToList();
+            sprites.Sort((a, b) => a.Frame.CompareTo(b.Frame));
+            
+            var animationClipName = MakeClipName(sprites[0]);
+            var fullAssetPath = Path.Combine(animationPath, animationClipName + ".anim");
+
+            // "<name>_8fps" -> 8, otherwise fall back to the user-specified frame rate
+            var fps = TryParseFps(animationClipName, out var parsedFps) ? parsedFps : m_userPrefs.OutFrameRate;
+
+            if (!IsExistingClip(fullAssetPath)) {
+                CreateNewClip(sprites, fps, fullAssetPath);
+                return;
+            }
+
+            switch (m_userPrefs.OnClipExist) {
+                case ExistingClipBehaviour.Skip:
+                    break;
+                case ExistingClipBehaviour.Update:
+                    UpdateClip(sprites, fps, fullAssetPath);
+                    break;
+                case ExistingClipBehaviour.Override:
+                    CreateNewClip(sprites, fps, fullAssetPath);
+                    break;
+                default:
+                    throw new ArgumentOutOfRangeException();
+            }
         }
     }
 }
