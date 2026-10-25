@@ -1,6 +1,6 @@
 {
-    "name": "Cayaware.Editor",
-    "rootNamespace": "",
+    "name": "Cayaware.SpritesToClips.Editor",
+    "rootNamespace": "Cayaware.EditorTools",
     "references": [],
     "includePlatforms": [
         "Editor"
